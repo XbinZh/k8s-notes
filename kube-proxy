@@ -1,0 +1,100 @@
+Kubernetes和容器网络详解系列之Kube Proxy
+
+目录
+
+
+1. Kube Proxy介绍
+2. Kube Proxy转发过程
+3. KubeProxy源代码分析
+
+
+
+1. Kube Proxy介绍
+
+我们在Kubernetes和容器网络详解系列之Kubernetes Service中介绍Service的时候说，Service解耦了前端用户和后端真正提供服务的Pods，是Kubernetes中Pods的负载均衡器。但是，Service是一个逻辑和抽象的概念，它本身并没有负载均衡的能力，Kubernetes具体是怎么做到这一点的呢？
+
+答案是Kube Proxy。
+
+Kube Proxy是Kubernetes中工作节点上的一个简单的网络代理和负载均衡器。它具体实现Service模型。根据Service的Selector所匹配的Pods（通过该Service对应的Endpoints得到）, 对这些Pods做负载均衡和流量代理，服务Service的访问者。
+
+Kube Proxy运行在集群中的每一个节点上。它可以对访问Service的流量做简单的TCP、UDP流的代理，通过轮询Round Robin算法把对Service访问的流量转发到后端真正提供服务的Pods上。由Kube Proxy代理和转发流量的工作模式被称为userspace。因为Kube Proxy是用户态的一个进程，因此需要把数据包从内核态拷贝到用户态，再做代理和转发，在效率和安全性上都有很大问题。
+
+当然，从Kubernetes v1.1版本开始，Kubernetes为我们提供了通过iptables转发流量的方式。我们在Kubernetes和容器网络详解系列之Kubernetes Service中的5. Service的流量转发模式中详细介绍了userspace和iptables转发的主要过程和不同点。
+
+这里总结下Kube Proxy的主要功能和工作过程：
+
+
+
+Kube Proxy通过apiserver监控（watch）Service和Endpoints的变化；
+
+Kube Proxy为每个spec.type: ClusterIP的Service分配一个本地随机端口，并安装相应的iptables规则；
+
+Kube Proxy为每个spec.type: NodeType的Service分配集群NodePort端口，并安装相应的iptables规则；
+
+Kube Proxy通过负载均衡算法（Round Robin）选择一个后端Pod，并把流量代理和转发到此Pod；
+通过设置service.spec.sessionAffinity: ClientIP支持基于ClientIP的会话亲和性；
+
+Kubernetes v1.0只支持这种转发方式。
+
+
+注意：
+
+
+如果Kube Proxy的转发模式是iptables，则Kube Proxy不执行流量代理和转发的功能；
+通过设置kube Proxy的启动参数--proxy-mode设定使用userspace还是iptables代理模式;
+你可以通过指定spec.clusterIP: None创建一个headless的Service，不使用Kubernetes为你的服务做负载均衡，以及提供一个Service的IP地址。
+
+
+
+2. Kube Proxy的流量转发过程
+
+以下是Service的三种类型：ClusterIP、NodePort和LoadBalancer时Kube Proxy的转发流量的详细过程图。
+
+
+
+解释如下：
+
+
+2.1 对于spec.type: ClusterIP类型的流量
+
+
+2.2 对于spec.type: NodePort类型的流量
+
+
+2.3 对于spec.type: LoadBalancer类型的流量
+
+
+2.4 对于跨节点通信的流量
+
+
+3. Kube Proxy源代码分析
+
+
+3.1 cmd\kube-proxy
+
+app\server.go
+proxy.go
+
+
+3.2 pkg\proxy
+
+3.2.1 config
+
+3.2.2 iptables
+
+3.2.3 userspace
+
+以下是一些主要的源文件：
+
+负载均衡器：loadbalancer.go
+端口分配：port_allocator.go
+代理功能：proxier.go
+流量转发：proxysocket.go
+负载均衡算法：roundrobin.go
+
+
+3.3 pkg\util\iptables\iptables.go
+
+这个文件是Kube Proxy对Service安装iptables规则、trap客户端访问Service流量、以及iptables对后端Pods进行流量转发时的主要工具，具体地讲是提供了对iptables相关命令行功能的封装，尤其是规则的增删改查。
+
+我后面会专门写一篇Kubernetes和容器网络详解系列之iptables讲述Kubernetes中如何使用iptables规则做SNAT/DNAT和流量转发。
